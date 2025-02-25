@@ -14,135 +14,141 @@
 (async function() {
     'use strict';
 
-    // Get the current page number from the URL.
+    let downloadFinished = false;
+    let cyclingInterval = null;
     const urlParams = new URLSearchParams(window.location.search);
     let currentPageNumber = parseInt(urlParams.get('pageNumber')) || 1;
-    let largestPageNumber = 0;
-    let cyclingInterval = null;
-    let downloadFinished = false;
 
-    // Update the largest page number from the pagination elements.
-    function getLargestPageNumber() {
-        const pageLinks = document.querySelectorAll('.page-item');
-        const pageNumbers = [];
-        pageLinks.forEach(link => {
-            const textContent = link.textContent.trim();
-            if (!isNaN(textContent) && textContent !== '') {
-                pageNumbers.push(parseInt(textContent, 10));
-            }
-        });
-        if (pageNumbers.length > 0) {
-            largestPageNumber = Math.max(...pageNumbers);
-        }
-        console.log("Updated largest page number:", largestPageNumber);
+    function logStep(step, success = true) {
+        console.log(success ? `✅ ${step} - SUCCESS` : `❌ ${step} - FAILED`);
     }
 
-    // Navigate to the next page.
-    function goToNextPage() {
-        getLargestPageNumber(); // In case the number changes.
-        currentPageNumber++;
+    async function waitForElement(selector, timeout = 5000) {
+        let timeElapsed = 0;
+        while (timeElapsed < timeout) {
+            const element = document.querySelector(selector);
+            if (element) return element;
+            await new Promise(resolve => setTimeout(resolve, 500));
+            timeElapsed += 500;
+        }
+        return null;
+    }
 
-        // If we exceed the last page, stop cycling.
-        if (currentPageNumber > largestPageNumber) {
-            stopCycling();
-            startButton.style.display = 'inline-block';
+    async function processDropdowns() {
+        console.log("Starting download process...");
+
+        const dropdowns = document.querySelectorAll('[class^="Dropdown-module_container__"]');
+        if (dropdowns.length === 0) {
+            logStep("No dropdowns found", false);
             return;
         }
 
+        for (let i = 0; i < dropdowns.length; i++) {
+            const dropdown = dropdowns[i];
+            dropdown.click();
+            logStep(`Dropdown ${i + 1} opened`);
+
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            const container = await waitForElement('[class^="Dropdown-module_dropdown_container__"]');
+            if (!container) continue;
+
+            const downloadOption = Array.from(container.querySelectorAll('div'))
+                .find(div => div.textContent.includes('Download & transfer via USB'));
+            if (downloadOption) {
+                downloadOption.click();
+                logStep("Download & transfer option clicked");
+            } else {
+                logStep("Download & transfer option not found", false);
+                continue;
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            const deviceSelection = await waitForElement('span[id^="download_and_transfer_list_"]');
+            if (deviceSelection) {
+                deviceSelection.click();
+                logStep("Kindle device selected");
+            } else {
+                logStep("No Kindle device found", false);
+                continue;
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            const confirmButton = Array.from(container.querySelectorAll('[id$="_CONFIRM"]'))
+                .find(div => div.textContent.includes('Download'));
+            if (confirmButton) {
+                confirmButton.click();
+                logStep("Download confirmed");
+            } else {
+                logStep("Confirm button not found", false);
+                continue;
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            const closeNotification = await waitForElement('span[id="notification-close"]');
+            if (closeNotification) {
+                closeNotification.click();
+                logStep("Success notification closed");
+            } else {
+                logStep("Notification close button not found", false);
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+
+        downloadFinished = true;
+        console.log("All dropdowns processed");
+        goToNextPage(); // Now, go to the next page only after downloads finish
+    }
+
+    function goToNextPage() {
+        if (!downloadFinished) {
+            console.log("Waiting for downloads to finish before flipping page...");
+            return;
+        }
+
+        currentPageNumber++;
         console.log("Navigating to page:", currentPageNumber);
+
+        // Reset flag so downloads happen on the next page
+        downloadFinished = false;
+
         setTimeout(() => {
             window.location.href = `https://www.amazon.com/hz/mycd/digital-console/contentlist/booksAll/dateDsc/?pageNumber=${currentPageNumber}`;
         }, 2000);
     }
 
-    // Process the download dropdowns. This function simulates your download process.
-    async function processDropdowns() {
-        const dropdowns = document.querySelectorAll('[class^="Dropdown-module_container__"]');
-        for (let i = 0; i < dropdowns.length; i++) {
-            const dropdown = dropdowns[i];
-            dropdown.click();
-            console.log(`Dropdown ${i + 1} opened`);
-            await new Promise(resolve => setTimeout(resolve, 500));
-
-            await new Promise(resolve => setTimeout(() => {
-                const container = dropdown.querySelector('[class^="Dropdown-module_dropdown_container__"]');
-                if (container) {
-                    const topDiv = Array.from(container.querySelectorAll('div'))
-                        .find(div => div.textContent.includes('Download & transfer via USB'));
-                    if (topDiv && topDiv.querySelector('div')) {
-                        topDiv.querySelector('div').click();
-                    }
-                }
-                resolve();
-            }, 500));
-
-            await new Promise(resolve => setTimeout(resolve, 500));
-
-            await new Promise(resolve => setTimeout(() => {
-                const element = dropdown.querySelector('span[id^="download_and_transfer_list_"]');
-                if (element) element.click();
-                resolve();
-            }, 500));
-
-            await new Promise(resolve => setTimeout(resolve, 500));
-
-            await new Promise(resolve => setTimeout(() => {
-                const confirmDiv = Array.from(dropdown.querySelectorAll('[id$="_CONFIRM"]'))
-                    .find(div => div.textContent.includes('Download'));
-                if (confirmDiv) confirmDiv.click();
-                resolve();
-            }, 500));
-
-            await new Promise(resolve => setTimeout(resolve, 500));
-
-            await new Promise(resolve => setTimeout(() => {
-                const closeBtn = document.querySelector('span[id="notification-close"]');
-                if (closeBtn) closeBtn.click();
-                resolve();
-            }, 500));
-
-            // Wait a little before processing the next dropdown.
-            await new Promise(resolve => setTimeout(resolve, 3000));
-        }
-        downloadFinished = true;
-        console.log('All dropdowns processed');
-    }
-
-    // Start the cycling process. First, it processes the downloads,
-    // then—once complete—it starts cycling pages.
     async function startCycling() {
         getLargestPageNumber();
-        downloadFinished = false; // Reset flag.
+        downloadFinished = false;
 
-        console.log("Starting download process...");
-        // Process dropdowns automatically (no extra button needed).
-        await processDropdowns();
-        console.log("Download process finished, starting page cycling.");
+        while (!downloadFinished) {
+            console.log("Waiting before starting downloads on new page...");
+            await new Promise(resolve => setTimeout(resolve, 10000)); // 10s delay before starting downloads
 
-        cyclingInterval = setInterval(goToNextPage, 5000); // Cycle every 5 seconds.
-        sessionStorage.setItem('cyclingActive', 'true');
-        console.log("Page cycling started.");
+            await processDropdowns(); // Start downloads
     }
 
-    // Stop cycling.
+    cyclingInterval = setInterval(goToNextPage, 5000); // Cycle every 5 seconds
+    sessionStorage.setItem('cyclingActive', 'true'); // Flag to auto-resume cycling
+    console.log("Page cycling started.");
+}
+
     function stopCycling() {
-        if (cyclingInterval) {
-            clearInterval(cyclingInterval);
-            cyclingInterval = null;
-            sessionStorage.removeItem('cyclingActive');
-            console.log("Page cycling stopped.");
-        }
+        clearInterval(cyclingInterval);
+        console.log("Stopped page cycling");
     }
 
-    // Create the "Start Page Cycling" button.
     const startButton = document.createElement('button');
-    startButton.textContent = 'Start Page Cycling';
+    startButton.textContent = 'Start Download & Flip';
     Object.assign(startButton.style, {
         position: 'fixed',
         top: '10px',
         left: '10px',
         padding: '10px',
-        zIndex: '1000',
         backgroundColor: 'green',
         color: 'white',
         border: 'none',
@@ -150,15 +156,13 @@
     });
     document.body.appendChild(startButton);
 
-    // Create the "Stop Page Cycling" button.
     const stopButton = document.createElement('button');
-    stopButton.textContent = 'Stop Page Cycling';
+    stopButton.textContent = 'Stop';
     Object.assign(stopButton.style, {
         position: 'fixed',
         top: '10px',
         left: '160px',
         padding: '10px',
-        zIndex: '1000',
         backgroundColor: 'red',
         color: 'white',
         border: 'none',
@@ -166,21 +170,13 @@
     });
     document.body.appendChild(stopButton);
 
-    // When the Start button is clicked, begin the download process then page cycling.
-    startButton.addEventListener('click', () => {
-        startCycling();
-        startButton.style.display = 'none';
-    });
+    startButton.addEventListener('click', startCycling);
+    stopButton.addEventListener('click', stopCycling);
 
-    // When the Stop button is clicked, stop page cycling.
-    stopButton.addEventListener('click', () => {
-        stopCycling();
-        startButton.style.display = 'inline-block';
-    });
-
-    // On page load, if cycling was active, resume it automatically.
-    if (sessionStorage.getItem('cyclingActive') === 'true') {
+    // Auto restart process on new page
+    if (window.location.href.includes("pageNumber=")) {
+        console.log("Restarting downloads on new page...");
         startCycling();
-        startButton.style.display = 'none';
     }
+
 })();
